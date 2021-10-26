@@ -4,6 +4,13 @@ from inspect import getmembers, isfunction # Used to get list of all functions
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GObject, GLib
 
+# setting
+setting_save_to_file = True
+setting_always_new_object = False
+setting_mix_functions = True
+
+results_file_handler = open("results.txt", "w")
+
 exceptions = ["modify_cursor", #Not reported because it is deprecated, but still may be reported later 
 # May cause strange crashes, hard to reproduce
 "unref",
@@ -12,32 +19,8 @@ exceptions = ["modify_cursor", #Not reported because it is deprecated, but still
 "_ref",
 
 "mark_busy", # GIT 3954
-"get_app_info", # GtkAppChooserButton
 "new", # TODO Button new, Box new Pygobject
 "free", # Border free PyGobject
-"_unref", # TODO CssProvider._unref
-"get_bounding_box_center", # TODO GestureDrag.get_bounding_box_center
-"initialize", # TODO IconViewAccessible
-"get_n_links", # TODO LabelAccessible
-"serialize", # TODO NumerableIcon
-"map", # TODO PlacesSidebar
-"get_height", # TODO PrintContext
-"get_width", # TODO PrintContext
-"draw_page_finish", # TODO PrintOperation
-"backward_char", # TODO TextIter
-"backward_cursor_position", # TODO TextIter
-"backward_line", # TODO TextIter
-"backward_sentence_start", # TODO TextIter
-"backward_to_tag_toggle", # TODO TextIter
-"backward_visible_cursor_position", # TODO TextIter
-"backward_visible_line", # TODO TextIter
-"backward_visible_word_start", # TODO TextIter
-"backward_word_start", # TODO TextIter
-"begins_tag", # TODO TextIter
-"ends_line", # TODO TextIter
-"get_path", # TODO ThemingEngine
-"get_object_type", # TODO  WidgetPath
-"get_request_mode", # TODO BinLayout
 "next", #TODO BitsetIter
 "previous", #TODO BitsetIter
 "notify", #TODO DropTarget 
@@ -62,22 +45,11 @@ exceptions = ["modify_cursor", #Not reported because it is deprecated, but still
 "get_margin", #TODO StyleContext
 "get_padding", #TODO StyleContext
 "get_state", #TODO StyleContext
-"ends_sentence", #TODO TextIter
-"ends_tag", #TODO TextIter
-"ends_word", #TODO 
-"forward_char", #TODO 
-"forward_cursor_position", #TODO 
-"forward_line", #TODO 
-"forward_sentence_end", #TODO 
-"forward_to_end", #TODO 
-"forward_to_line_end", #TODO 
-"forward_to_tag_toggle", #TODO 
-"forward_visible_cursor_position", #TODO 
-"", #TODO 
-"", #TODO 
-"", #TODO 
-"", #TODO 
-"", #TODO 
+"set_text", #TODO PasswordEntryBuffer
+"get_height", #TODO PrintContext
+"get_width", #TODO PrintContext
+"draw_page_finish", #TODO PrintOperation
+"get_request_mode", #TODO BinLayout
 "", #TODO 
 "", #TODO 
 "", #TODO 
@@ -112,7 +84,7 @@ disallowed_classes = [
     "FileChooserNative", # Slow
     "FontChooserWidget", # Slow
     "TextIter", # Too much crashes
-    "",
+    "ScrolledWindow", # Strange crash
     "",
     "",
 ]
@@ -122,13 +94,16 @@ def print_custom(what,level):
         what = "  " + what
     print(what)    
 
+def save_to_file(what):
+    results_file_handler.write(what + "\n")
+    results_file_handler.flush()
 
 class fuzzer:
     def __init__(self):
         print("Initializing")
         GLib.timeout_add(50, self.starting)
 
-        self.all_classes = []
+        self.all_classes = {}
 
         gtk_objects = dir(Gtk)
         # Collect all classes 
@@ -140,21 +115,43 @@ class fuzzer:
                 continue
             if base_object in disallowed_classes:
                 continue
-            self.all_classes.append(base_object)    
+                
+            # Checks if class is instantable
+            ar = getattr(Gtk, base_object)
+            try:
+                test_obj = ar()
+                
+            except:
+                continue
+            
+            array_of_functions = []
+            # Finds all available methods of this class
+            for function in dir(test_obj):
+                type_of_function = eval("type(Gtk." + base_object + "." + function  + ")") # We get info about this thing
+                if str(type_of_function).find("gi.FunctionInfo") == -1: # It is not GTK function
+                    continue
+                if function in exceptions:
+                    continue      
+                if function.startswith("_"): # Private stuff, not really usable since probably this is also Python internals
+                    continue
+                if function.find("wait_") != -1: # This functions freezes entire script
+                    continue
+                
+                array_of_functions.append(function)
+            
+            self.all_classes[base_object] = array_of_functions 
+            
 
         # TODO save to list all available methods
-        self.tested_index = 419 # 0 is start index and can be changed to any value
+        self.tested_index = 0 # 0 is start index and can be changed to any value
         self.number_of_all_classes = len(self.all_classes)
-
-    def print_hi(self):
-        print("Hi")
-        return True
 
     def starting(self):
 
         self.tested_class = self.all_classes[self.tested_index]
         
         print_custom(str(self.tested_index) + " - testing " + str(self.tested_class),0)
+        save_to_file("############# " + str(self.tested_class) + " #############")
 
         ar = getattr(Gtk, self.tested_class)
         for _z in range(1):
@@ -170,15 +167,17 @@ class fuzzer:
                 
                 try:
                     for function in dir(obj):
-                        for _i in range(3): # may be executed several times, because sometimes memory is corrupted, and crash doesn't always happens
-                            obj = ar()
+                        for _i in range(1): # may be executed several times, because sometimes memory is corrupted, and crash doesn't always happens
+                            if setting_always_new_object:
+                                obj = ar()
+
                             type_of_function = eval("type(Gtk." + self.tested_class + "." + function  + ")") # We get info about this thing
                             
                             if str(type_of_function).find("gi.FunctionInfo") == -1: # It is not GTK function
                                 continue
                             if function in exceptions:
                                 continue      
-                            if function.startswith("_"): # Private stuff, TODO check this one by one
+                            if function.startswith("_"): # Private stuff, not really usable since probably this is also Python internals
                                 continue
                             # This functions freezes entire script
                             if function.find("wait_") != -1:
@@ -207,6 +206,7 @@ def start_test(app):
     fuzz = fuzzer()
     window = Gtk.ApplicationWindow(application=app)
     window.show()
+    roman = Gtk.Window()
     print(type(Gtk.Window.show))
 
 app = Gtk.Application(application_id='pl.pl.pl')
