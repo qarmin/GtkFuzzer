@@ -1,8 +1,8 @@
 import gi
 from inspect import getmembers, isfunction # Used to get list of all functions 
 
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, GObject, GLib
 
 exceptions = ["modify_cursor", #Not reported because it is deprecated, but still may be reported later 
 # May cause strange crashes, hard to reproduce
@@ -51,37 +51,49 @@ disallowed_classes = [
 
     "Window", "ToplevelAccessible" # Both classes together causes crashes, so this need to be tracked
 ]
-def start_test(_unused):
-    for _i in range(1000):
-        # aa = Gtk.WidgetPath()
-        # bb = Gtk.Window()
-        # aa = Gtk.GestureDrag()
-        # aa.get_bounding_box_center()
-        pass    
+class fuzzer:
+    def __init__(self):
+        print("In inits")
+        GLib.timeout_add(500, self.starting)
 
-    print("Looks that there is no crash")
-    gtk_objects = dir(Gtk)
+        self.all_classes = []
 
-    index = 0
+        gtk_objects = dir(Gtk)
+        # Collect all classes 
+        for base_object in gtk_objects:
+            type_of_thing = eval("type(Gtk." + base_object + ")")
+            str_type_of_thing = str(type_of_thing)
+            # print(type_of_thing)
+            if str_type_of_thing.find("gi.types") == -1:
+                continue
+            if base_object in disallowed_classes:
+                continue
+            self.all_classes.append(base_object)    
 
-    # This loop creates Gtk objects like Window or ScrolledWindow
-    for base_object in gtk_objects:
-        index += 1
-        type_of_thing = eval("type(Gtk." + base_object + ")")
-        str_type_of_thing = str(type_of_thing)
-        # print(type_of_thing)
-        if str_type_of_thing.find("gi.types") == -1:
-            continue
-        if base_object in disallowed_classes:
-            continue
+        # TODO save to list all available methods
+        self.tested_index = 0
+        self.number_of_all_classes = len(self.all_classes)
+
+    def print_hi(self):
+        print("Hi")
+        return True
+
+    def starting(self):
+        for _i in range(1000):
+            # aa = Gtk.WidgetPath()
+            # bb = Gtk.Window()
+            # aa = Gtk.GestureDrag()
+            # aa.get_bounding_box_center()
+            pass    
+
+        print("Looks that there is no crash")
+
+
+        self.tested_class = self.all_classes[self.tested_index]
         
-        # if not((index > 1116 and index < 1118) or (index > 1116 and index < 1118)):
-        #     continue
-        if index < 500 or index > 12000:
-            continue
-        print(str(index) + " - testing " + str(base_object))
+        print(str(self.tested_index) + " - testing " + str(self.tested_class))
 
-        ar = getattr(Gtk, base_object)
+        ar = getattr(Gtk, self.tested_class)
         try:
             obj = ar()
             try:
@@ -89,7 +101,7 @@ def start_test(_unused):
                     for _i in range(1): # 100 times because sometimes memory is corrupted, and crash doesn't always show
                         obj = ar()
                         
-                        type_of_function = eval("type(Gtk." + base_object + "." + function  + ")") # We get info about this thing
+                        type_of_function = eval("type(Gtk." + self.tested_class + "." + function  + ")") # We get info about this thing
                         if str(type_of_function).find("gi.FunctionInfo") == -1: # It is not GTK function
                             continue
                         if function in exceptions:
@@ -103,7 +115,7 @@ def start_test(_unused):
                         # print(type_of_function)
                         # TODO Check if function cause bugs(excluded function)
                         # TODO Check if arguments are supported
-                        print("Executing " + base_object + "." + function)
+                        print("Executing " + self.tested_class + "." + function)
                         try:
                             function_handler = getattr(obj, function)
                             function_handler() # TODO Add support for parameters
@@ -112,15 +124,19 @@ def start_test(_unused):
             except:
                 print("ERROR: Did")
         except:
-            print("Failed to create - " + str(base_object))
-            continue
+            print("Failed to create - " + str(self.tested_class))
 
-    print("Ended test")
-    Gtk.main_quit() # Uncomment to fix crash
+        print("Ended test")
+        self.tested_index += 1
+        return True
+    #Gtk.main_quit() 
 
+def start_test(app):
+    fuzz = fuzzer()
+    window = Gtk.ApplicationWindow(application=app)
+    window.show()
 
-
-window = Gtk.Window(title="Close close to sta")
-window.show()
-window.connect("destroy", start_test)
-Gtk.main()
+app = Gtk.Application(application_id='pl.pl.pl')
+app.connect('activate', start_test)
+app.run(None)
+ 
